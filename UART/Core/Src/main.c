@@ -34,10 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-#define DHT_PORT GPIOB
-#define DHT_PIN GPIO_PIN_6
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,23 +43,19 @@
 
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim1;
-TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-uint16_t waiting;
-uint16_t previous_tim;
-uint16_t current_tim;
+float waiting;
+uint16_t previous_tim = 0;
+uint16_t current_tim = 0;
 uint8_t msg1[1];
 uint8_t led[5] ={LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin};
 bool on_led = false,
 	 led_reverse_flag = false;
-//Initialize DHT11
-float Temperature=0, Humidity=0;
-uint16_t SUM, RH, TEMP;
-uint8_t Rh_byte1, Rh_byte2, Temp_byte1, Temp_byte2,
-        Presence =0;
+uint32_t ADC_VAL =0;
+float temp;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,96 +63,12 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-void Delay(uint16_t time) {
-	__HAL_TIM_SET_COUNTER(&htim2,0);
-	while (__HAL_TIM_GET_COUNTER(&htim2) < time);
-}
-
-// sensor
-
-void Set_Pin_Output (GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
-{
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	GPIO_InitStruct.Pin = GPIO_Pin;
-	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-	HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
-}
-
-void Set_Pin_Input (GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin)
-{
-	GPIO_InitTypeDef GPIO_InitStruct = {0};
-	GPIO_InitStruct.Pin = GPIO_Pin;
-	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-	GPIO_InitStruct.Pull = GPIO_NOPULL;
-	HAL_GPIO_Init(GPIOx, &GPIO_InitStruct);
-}
-
-
-void DHT_Start (void)
-{
-	Set_Pin_Output (DHT_PORT, DHT_PIN);  // set the pin as output
-	HAL_GPIO_WritePin (DHT_PORT, DHT_PIN, 0);   // pull the pin low
-	Delay (18000);   // wait for 18ms
-    HAL_GPIO_WritePin (DHT_PORT, DHT_PIN, 1);   // pull the pin high
-    Delay (20);   // wait for 30us
-	Set_Pin_Input(DHT_PORT, DHT_PIN);    // set as input
-}
-
-uint8_t DHT_Check_Response (void)
-{
-	uint8_t Response = 0;
-	Delay (40);
-	if (!(HAL_GPIO_ReadPin (DHT_PORT, DHT_PIN)))
-	{
-		Delay (80);
-		if ((HAL_GPIO_ReadPin (DHT_PORT, DHT_PIN))) Response = 1;
-		else Response = -1;
-	}
-	while ((HAL_GPIO_ReadPin (DHT_PORT, DHT_PIN)));   // wait for the pin to go low
-
-	return Response;
-}
-
-uint8_t DHT_Read (void)
-{
-	uint8_t i,j;
-	for (j=0;j<8;j++)
-	{
-		while (!(HAL_GPIO_ReadPin (DHT_PORT, DHT_PIN)));   // wait for the pin to go high
-		Delay (40);   // wait for 40 us
-		if (!(HAL_GPIO_ReadPin (DHT_PORT, DHT_PIN)))   // if the pin is low
-		{
-			i&= ~(1<<(7-j));   // write 0
-		}
-		else i|= (1<<(7-j));  // if the pin is high, write 1
-		while ((HAL_GPIO_ReadPin (DHT_PORT, DHT_PIN)));  // wait for the pin to go low
-	}
-	return i;
-}
-
-void Display_Temp(void) {
-	uint8_t temp[20];
-	sprintf(temp,"Temp: %2.f C\n\r",Temperature);
-	HAL_UART_Transmit(&huart1, (uint8_t*)temp, (uint8_t)sizeof(temp), 100);
-}
-
-void Display_Humi(void) {
-	char humi[30];
-	sprintf(humi,"Rh: %2.f ",Humidity);
-	HAL_UART_Transmit(&huart1, (uint8_t*)humi, (uint8_t)sizeof(humi), 100);
-	uint8_t pc[]="%\n";
-	HAL_UART_Transmit(&huart1, (uint8_t*)pc, (uint8_t)sizeof(pc), 100);
-}
-
 
 void On_Off(void) {
 	if (on_led) {
@@ -180,10 +88,14 @@ void On_Off(void) {
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	previous_tim = current_tim;
+	current_tim = HAL_GetTick();
+	if (current_tim==previous_tim) waiting =0;
+	else waiting=(float)((current_tim-previous_tim + 1000)/1000);
 	if (htim->Instance == htim1.Instance) {
-		uint8_t onled[] = "LED ON\n";
+		char onled[40];
 		uint8_t offled[] = "LED OFF\n";
-		HAL_UART_Transmit(&huart1, onled, sizeof(onled), 100);
+		sprintf(onled,"LED ON. CYCLE: %3.f s\n\r",waiting);
+		HAL_UART_Transmit(&huart1, (uint8_t*)onled, (uint8_t)strlen(onled), 100);
 		if (!led_reverse_flag) {
 			for (int i = 0; i < 5; i++) {
 				HAL_GPIO_WritePin(LED2_GPIO_Port, led[i], 1);
@@ -205,7 +117,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		for (int i = 0; i < 5; i++) {
 			HAL_GPIO_TogglePin(LED2_GPIO_Port, led[i]);
 		}
-		current_tim = HAL_GetTick();
 		HAL_UART_Transmit(&huart1, offled, sizeof(offled), 100);
 	}
 }
@@ -234,15 +145,17 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	 	  case 2:
 	 		  led_reverse_flag=false;
 	 		  HAL_TIM_Base_Start_IT(&htim1);
-	 		  __HAL_TIM_SET_AUTORELOAD(&htim1,24000 - 1);
- 			  sprintf(cmd,"Waiting 20s mode\n");
+			 __HAL_TIM_SET_AUTORELOAD(&htim1,24000 - 1);
+			  current_tim=HAL_GetTick();
+			 sprintf(cmd,"Waiting 20s mode\n");
  			  HAL_UART_Transmit(&huart1, (uint8_t*)cmd, (uint8_t)strlen(cmd), 100);
 	 		  break;
 	 	  case 3:
 	 		  led_reverse_flag=true;
 	 		  HAL_TIM_Base_Start_IT(&htim1);
-	 		 __HAL_TIM_SET_AUTORELOAD(&htim1,12000 - 1);
- 			  sprintf(cmd,"Waiting 10s mode\n");
+			  __HAL_TIM_SET_AUTORELOAD(&htim1,12000 - 1);
+			  current_tim=HAL_GetTick();
+	 		  sprintf(cmd,"Waiting 10s mode\n");
  			  HAL_UART_Transmit(&huart1, (uint8_t*)cmd, (uint8_t)strlen(cmd), 100);
 	 		  break;
 	 	  case 4:
@@ -251,14 +164,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
  			  HAL_TIM_Base_Stop_IT(&htim1);
 	 		  break;
 	 	  case 5:
- 			   uint8_t cmd1[] ="Temperature mode\n";
- 			   HAL_UART_Transmit(&huart1,cmd1,sizeof(cmd1), 100);
-	 		   Display_Temp();
-	 		  break;
-	 	  case 6:
-			   uint8_t cmd2[] ="Humidity mode\n";
-			   HAL_UART_Transmit(&huart1,cmd2,sizeof(cmd2), 100);
-	 		   Display_Humi();
+ 			   char cmd1[30];
+ 			   sprintf(cmd1,"Temperature: %2.f C\n",2.34);
+ 			   HAL_UART_Transmit(&huart1,(uint8_t*)cmd1,sizeof(cmd1), 100);
 	 		  break;
 	 	  default:
 	 		  if (x!=-1) {
@@ -279,61 +187,47 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 /**
   * @brief  The application entry point.
   * @retval int
- */
+  */
+int main(void)
+{
 
-int main(void) {
+  /* USER CODE BEGIN 1 */
 
-	/* USER CODE BEGIN 1 */
+  /* USER CODE END 1 */
 
-	/* USER CODE END 1 */
+  /* MCU Configuration--------------------------------------------------------*/
 
-	/* MCU Configuration--------------------------------------------------------*/
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
 
-	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-	HAL_Init();
+  /* USER CODE BEGIN Init */
 
-	/* USER CODE BEGIN Init */
+  /* USER CODE END Init */
 
-	/* USER CODE END Init */
+  /* Configure the system clock */
+  SystemClock_Config();
 
-	/* Configure the system clock */
-	SystemClock_Config();
+  /* USER CODE BEGIN SysInit */
 
-	/* USER CODE BEGIN SysInit */
+  /* USER CODE END SysInit */
 
-	/* USER CODE END SysInit */
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART1_UART_Init();
+  MX_TIM1_Init();
+  /* USER CODE BEGIN 2 */
+  HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+  /* USER CODE END 2 */
 
-	/* Initialize all configured peripherals */
-	MX_GPIO_Init();
-	MX_USART1_UART_Init();
-	MX_TIM1_Init();
-	MX_TIM2_Init();
-	/* USER CODE BEGIN 2 */
-	HAL_TIM_Base_Start(&htim2);
-	HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
-	/* USER CODE END 2 */
-
-	/* Infinite loop */
-	/* USER CODE BEGIN WHILE */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
 	while (1) {
-		DHT_Start();
-		Presence = DHT_Check_Response();
-		Rh_byte1 = DHT_Read();
-		Rh_byte2 = DHT_Read();
-		Temp_byte1 = DHT_Read();
-		Temp_byte2 = DHT_Read();
-		SUM = DHT_Read();
 
-		TEMP = Temp_byte1;
-		RH = Rh_byte1;
+    /* USER CODE END WHILE */
 
-		Temperature = (float) TEMP;
-		Humidity = (float) RH;
-		/* USER CODE END WHILE */
-
-		/* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
 	}
-	/* USER CODE END 3 */
+  /* USER CODE END 3 */
 }
 
 /**
@@ -396,7 +290,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 60000-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 24000 - 1;
+  htim1.Init.Period = 65535;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -418,51 +312,6 @@ static void MX_TIM1_Init(void)
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
-
-}
-
-/**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM2_Init(void)
-{
-
-  /* USER CODE BEGIN TIM2_Init 0 */
-
-  /* USER CODE END TIM2_Init 0 */
-
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM2_Init 1 */
-
-  /* USER CODE END TIM2_Init 1 */
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 50-1;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 65535;
-  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM2_Init 2 */
-
-  /* USER CODE END TIM2_Init 2 */
 
 }
 
@@ -520,7 +369,7 @@ static void MX_GPIO_Init(void)
                           |LED5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : LED1_Pin LED2_Pin LED3_Pin LED4_Pin
                            LED5_Pin */
@@ -533,7 +382,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : DHT11_Pin */
   GPIO_InitStruct.Pin = DHT11_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(DHT11_GPIO_Port, &GPIO_InitStruct);

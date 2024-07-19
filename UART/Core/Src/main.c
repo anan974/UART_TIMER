@@ -48,9 +48,9 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-float waiting;
-uint16_t previous_tim = 0;
-uint16_t current_tim = 0;
+uint32_t waiting;
+uint32_t previous_tim = 0;
+uint32_t current_tim = 0;
 uint8_t msg[1];
 uint8_t led[5] ={LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin};
 bool on_led = false,
@@ -179,12 +179,11 @@ void On_Off(void) {
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	previous_tim = current_tim;
 	current_tim = HAL_GetTick();
-	if (current_tim == previous_tim) waiting =(current_tim-previous_tim)/1000;
-	else waiting=(current_tim-previous_tim + 1000)/1000;
+	waiting=(current_tim-previous_tim)/1000;
 	if (htim->Instance == htim1.Instance) {
-		char onled[40];
+		char onled[60];
 		uint8_t offled[] = "LED OFF\n";
-		sprintf(onled,"LED ON. CYCLE: %3.f s\n\r",waiting);
+		sprintf(onled,"LED ON. CYCLE: %lu s\n",waiting);
 		HAL_UART_Transmit(&huart1, (uint8_t*)onled, (uint8_t)strlen(onled), 100);
 		if (!led_reverse_flag) {
 			for (int i = 0; i < 5; i++) {

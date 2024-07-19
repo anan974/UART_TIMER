@@ -43,6 +43,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart1;
 
@@ -50,12 +51,12 @@ UART_HandleTypeDef huart1;
 float waiting;
 uint16_t previous_tim = 0;
 uint16_t current_tim = 0;
-uint8_t msg1[1];
+uint8_t msg[1];
 uint8_t led[5] ={LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin};
 bool on_led = false,
-	 led_reverse_flag = false;
+	 led_reverse_flag = false,
+	 sensor_mode_flag = false;
 uint32_t ADC_VAL =0;
-float temp;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,12 +64,101 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define DHT11_PORT GPIOB
+#define DHT11_PIN GPIO_PIN_9
+uint8_t RHI, RHD, TCI, TCD, SUM;
+uint32_t pMillis, cMillis;
+float tCelsius = 0;
+float tFahrenheit = 0;
+float RH = 0;
+uint8_t TFI = 0;
+uint8_t TFD = 0;
+char strCopy[15];
+
+void microDelay (uint16_t delay)
+{
+  __HAL_TIM_SET_COUNTER(&htim2, 0);
+  while (__HAL_TIM_GET_COUNTER(&htim2) < delay);
+}
+
+uint8_t DHT11_Start (void)
+{
+  uint8_t Response = 0;
+  GPIO_InitTypeDef GPIO_InitStructPrivate = {0};
+  GPIO_InitStructPrivate.Pin = DHT11_PIN;
+  GPIO_InitStructPrivate.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStructPrivate.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStructPrivate.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(DHT11_PORT, &GPIO_InitStructPrivate); // set the pin as output
+  HAL_GPIO_WritePin (DHT11_PORT, DHT11_PIN, 0);   // pull the pin low
+  HAL_Delay(20);   // wait for 20ms
+  HAL_GPIO_WritePin (DHT11_PORT, DHT11_PIN, 1);   // pull the pin high
+  microDelay (30);   // wait for 30us
+  GPIO_InitStructPrivate.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStructPrivate.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(DHT11_PORT, &GPIO_InitStructPrivate); // set the pin as input
+  microDelay (40);
+  if (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)))
+  {
+    microDelay (80);
+    if ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN))) Response = 1;
+  }
+  pMillis = HAL_GetTick();
+  cMillis = HAL_GetTick();
+  while ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
+  {
+    cMillis = HAL_GetTick();
+  }
+  return Response;
+}
+
+uint8_t DHT11_Read (void)
+{
+  uint8_t a,b;
+  for (a=0;a<8;a++)
+  {
+    pMillis = HAL_GetTick();
+    cMillis = HAL_GetTick();
+    while (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
+    {  // wait for the pin to go high
+      cMillis = HAL_GetTick();
+    }
+    microDelay (40);   // wait for 40 us
+    if (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)))   // if the pin is low
+      b&= ~(1<<(7-a));
+    else
+      b|= (1<<(7-a));
+    pMillis = HAL_GetTick();
+    cMillis = HAL_GetTick();
+    while ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
+    {  // wait for the pin to go low
+      cMillis = HAL_GetTick();
+    }
+  }
+  return b;
+}
+
+void Read_RH(void) {
+	char cmd[30];
+	sprintf(cmd,"Rh: %2.f",RH);
+	HAL_UART_Transmit(&huart1,(uint8_t*)cmd,(uint8_t)strlen(cmd), 100);
+	uint8_t pct[]="%\n";
+	HAL_UART_Transmit(&huart1,(uint8_t*)pct,(uint8_t)sizeof(pct), 100);
+}
+
+void Read_Temp(void) {
+	char cmd[30];
+	sprintf(cmd,"Temp: %2.f C",tCelsius);
+	HAL_UART_Transmit(&huart1,(uint8_t*)cmd,(uint8_t)strlen(cmd), 100);
+}
+
 
 void On_Off(void) {
 	if (on_led) {
@@ -89,8 +179,8 @@ void On_Off(void) {
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	previous_tim = current_tim;
 	current_tim = HAL_GetTick();
-	if (current_tim==previous_tim) waiting =0;
-	else waiting=(float)((current_tim-previous_tim + 1000)/1000);
+	if (current_tim == previous_tim) waiting =(current_tim-previous_tim)/1000;
+	else waiting=(current_tim-previous_tim + 1000)/1000;
 	if (htim->Instance == htim1.Instance) {
 		char onled[40];
 		uint8_t offled[] = "LED OFF\n";
@@ -121,62 +211,61 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	}
 }
 
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-  if (huart->Instance==huart1.Instance) {
-	  HAL_UART_Receive_IT(&huart1, msg1,sizeof(msg1));
-	  char cmd[20];
-	  int x = atoi(msg1);
-	  switch (x) {
-	 	  case 1:
-	 		  if (on_led) {
-	 			  on_led=false;
-	 			  sprintf(cmd,"Off Mode\n");
-	 			  HAL_UART_Transmit(&huart1, (uint8_t*)cmd, (uint8_t)strlen(cmd), 100);
-	 		  }
-	 		  else {
-	 			  on_led=true;
-	 			  sprintf(cmd,"On Mode\n");
-	 			  HAL_UART_Transmit(&huart1, (uint8_t*)cmd, (uint8_t)strlen(cmd), 100);
-	 		  }
-	 		  On_Off();
-	 		  break;
-	 	  case 2:
-	 		  led_reverse_flag=false;
-	 		  HAL_TIM_Base_Start_IT(&htim1);
-			 __HAL_TIM_SET_AUTORELOAD(&htim1,24000 - 1);
-			  current_tim=HAL_GetTick();
-			 sprintf(cmd,"Waiting 20s mode\n");
- 			  HAL_UART_Transmit(&huart1, (uint8_t*)cmd, (uint8_t)strlen(cmd), 100);
-	 		  break;
-	 	  case 3:
-	 		  led_reverse_flag=true;
-	 		  HAL_TIM_Base_Start_IT(&htim1);
-			  __HAL_TIM_SET_AUTORELOAD(&htim1,12000 - 1);
-			  current_tim=HAL_GetTick();
-	 		  sprintf(cmd,"Waiting 10s mode\n");
- 			  HAL_UART_Transmit(&huart1, (uint8_t*)cmd, (uint8_t)strlen(cmd), 100);
-	 		  break;
-	 	  case 4:
- 			  sprintf(cmd,"Stop waiting mode\n");
- 			  HAL_UART_Transmit(&huart1, (uint8_t*)cmd, (uint8_t)strlen(cmd), 100);
- 			  HAL_TIM_Base_Stop_IT(&htim1);
-	 		  break;
-	 	  case 5:
- 			   char cmd1[30];
- 			   sprintf(cmd1,"Temperature: %2.f C\n",2.34);
- 			   HAL_UART_Transmit(&huart1,(uint8_t*)cmd1,sizeof(cmd1), 100);
-	 		  break;
-	 	  default:
-	 		  if (x!=-1) {
-	 			  uint8_t nhaplai[]="Error\n";
-	 			  HAL_UART_Transmit(&huart1, nhaplai, sizeof(nhaplai), 100);
-	 			  x=0;
-	 		  }
-	 		  break;
-	 	 }
-  }
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	if (huart->Instance == huart1.Instance) {
+		HAL_UART_Receive_IT(&huart1, msg, sizeof(msg));
+		char cmd[20];
+		int x = atoi(msg);
+		switch (x) {
+		case 1:
+			if (on_led) {
+				on_led = false;
+				sprintf(cmd, "Off Mode\n");
+				HAL_UART_Transmit(&huart1, (uint8_t*) cmd,
+						(uint8_t) strlen(cmd), 100);
+			} else {
+				on_led = true;
+				sprintf(cmd, "On Mode\n");
+				HAL_UART_Transmit(&huart1, (uint8_t*) cmd,
+						(uint8_t) strlen(cmd), 100);
+			}
+			On_Off();
+			break;
+		case 2:
+			led_reverse_flag = false;
+			current_tim = HAL_GetTick();
+			HAL_TIM_Base_Start_IT(&htim1);
+			__HAL_TIM_SET_AUTORELOAD(&htim1, 24000 - 1);
+			sprintf(cmd, "Waiting 20s mode\n");
+			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
+					100);
+			break;
+		case 3:
+			led_reverse_flag = true;
+			current_tim = HAL_GetTick();
+			HAL_TIM_Base_Start_IT(&htim1);
+			__HAL_TIM_SET_AUTORELOAD(&htim1, 12000 - 1);
+			sprintf(cmd, "Waiting 10s mode\n");
+			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
+					100);
+			break;
+		case 4:
+			sprintf(cmd, "Stop waiting mode\n");
+			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
+					100);
+			HAL_TIM_Base_Stop_IT(&htim1);
+			break;
+		case 5:
+			uint8_t cmd[] = "Read Sensor mode\n";
+			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) sizeof(cmd),100);
+			sensor_mode_flag = true;
+			break;
+		default:
+			uint8_t nhaplai[] = "Error\n";
+			HAL_UART_Transmit(&huart1, nhaplai, sizeof(nhaplai), 100);
+			break;
+		}
+	}
 }
 
 
@@ -215,14 +304,37 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_TIM1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+  HAL_UART_Receive_IT(&huart1, msg, sizeof(msg));
+  HAL_TIM_Base_Start(&htim2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
-
+		 if(DHT11_Start())
+		    {
+		      RHI = DHT11_Read(); // Relative humidity integral
+		      RHD = DHT11_Read(); // Relative humidity decimal
+		      TCI = DHT11_Read(); // Celsius integral
+		      TCD = DHT11_Read(); // Celsius decimal
+		      SUM = DHT11_Read(); // Check sum
+		      if (RHI + RHD + TCI + TCD == SUM)
+		      {
+		        // Can use RHI and TCI for any purposes if whole number only needed
+		        tCelsius = (float)TCI + (float)(TCD/10.0);
+		        tFahrenheit = tCelsius * 9/5 + 32;
+		        RH = (float)RHI + (float)(RHD/10.0);
+		      }
+		      if (sensor_mode_flag) {
+					Read_RH();
+					HAL_Delay(500);
+					Read_Temp();
+					sensor_mode_flag=false;
+		      }
+		    }
+		 HAL_Delay(1000);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -312,6 +424,51 @@ static void MX_TIM1_Init(void)
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 72-1;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 65535;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
 
 }
 

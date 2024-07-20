@@ -233,8 +233,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		case 2:
 			led_reverse_flag = false;
 			current_tim = HAL_GetTick();
-			HAL_TIM_Base_Start_IT(&htim1);
 			__HAL_TIM_SET_AUTORELOAD(&htim1, 24000 - 1);
+			HAL_TIM_Base_Start_IT(&htim1);
 			sprintf(cmd, "Waiting 20s mode\n");
 			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
 					100);
@@ -242,8 +242,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 		case 3:
 			led_reverse_flag = true;
 			current_tim = HAL_GetTick();
-			HAL_TIM_Base_Start_IT(&htim1);
 			__HAL_TIM_SET_AUTORELOAD(&htim1, 12000 - 1);
+			HAL_TIM_Base_Start_IT(&htim1);
 			sprintf(cmd, "Waiting 10s mode\n");
 			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
 					100);
@@ -253,6 +253,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
 					100);
 			HAL_TIM_Base_Stop_IT(&htim1);
+			__HAL_TIM_SET_COUNTER(&htim1,0);
 			break;
 		case 5:
 			uint8_t cmd[] = "Read Sensor mode\n";

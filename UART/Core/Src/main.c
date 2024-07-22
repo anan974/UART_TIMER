@@ -220,65 +220,39 @@ int a2i(uint8_t* txt)
     }
     return sum;
 }
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	if (huart->Instance == huart1.Instance) {
-		HAL_UART_Receive_IT(&huart1, msg, sizeof(msg));
-		char cmd[20];
-		int x = atoi(msg);
-		switch (x) {
-		case 1:
-			if (on_led) {
-				on_led = false;
-				sprintf(cmd, "Off Mode\n");
-				HAL_UART_Transmit(&huart1, (uint8_t*) cmd,
-						(uint8_t) strlen(cmd), 100);
-			} else {
-				on_led = true;
-				sprintf(cmd, "On Mode\n");
-				HAL_UART_Transmit(&huart1, (uint8_t*) cmd,
-						(uint8_t) strlen(cmd), 100);
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	previous_tim = current_tim;
+	current_tim = HAL_GetTick();
+	waiting=(current_tim-previous_tim)/1000;
+	if (htim->Instance == htim1.Instance) {
+		char onled[60];
+		uint8_t offled[] = "LED OFF\n";
+		sprintf(onled,"LED ON. CYCLE: %lu s\n",waiting);
+		HAL_UART_Transmit_IT(&huart1, (uint8_t*)onled, (uint8_t)strlen(onled));
+		if (waiting_20s_flag) {
+			for (int i = 0; i < 5; i++) {
+				HAL_GPIO_WritePin(LED2_GPIO_Port, led[i], 1);
+				for (int i = 0; i < 2000; i++) {
+					for (int j = 0; j < 500; j++) {
+					}
+				}
 			}
-			On_Off();
-			break;
-		case 2:
-			led_reverse_flag = false;
-			current_tim = HAL_GetTick();
-			__HAL_TIM_SET_AUTORELOAD(&htim1, 24000 - 1);
-			HAL_TIM_Base_Start_IT(&htim1);
-			sprintf(cmd, "Waiting 20s mode\n");
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
-					100);
-			break;
-		case 3:
-			led_reverse_flag = true;
-			current_tim = HAL_GetTick();
-			__HAL_TIM_SET_AUTORELOAD(&htim1, 12000 - 1);
-			HAL_TIM_Base_Start_IT(&htim1);
-			sprintf(cmd, "Waiting 10s mode\n");
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
-					100);
-			break;
-		case 4:
-			sprintf(cmd, "Stop waiting mode\n");
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
-					100);
-			HAL_TIM_Base_Stop_IT(&htim1);
-			__HAL_TIM_SET_COUNTER(&htim1,0);
-			break;
-		case 5:
-			uint8_t cmd[] = "Read Sensor mode\n";
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) sizeof(cmd),100);
-			sensor_mode_flag = true;
-			break;
-		default:
-			uint8_t nhaplai[] = "Error\n";
-			HAL_UART_Transmit(&huart1, nhaplai, sizeof(nhaplai), 100);
-			break;
+		} else if (waiting_10s_flag){
+			for (int i = 4; i >= 0; i--) {
+				HAL_GPIO_WritePin(LED2_GPIO_Port, led[i], 1);
+				for (int i = 0; i < 2000; i++) {
+					for (int j = 0; j < 500; j++) {
+					}
+				}
+			}
 		}
+
+		for (int i = 0; i < 5; i++) {
+			HAL_GPIO_TogglePin(LED2_GPIO_Port, led[i]);
+		}
+		HAL_UART_Transmit_IT(&huart1, offled, sizeof(offled));
 	}
 }
-
 
 
 

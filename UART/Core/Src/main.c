@@ -34,6 +34,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define DHT11_PORT GPIOB
+#define DHT11_PIN GPIO_PIN_9
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -71,8 +73,6 @@ static void MX_TIM2_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define DHT11_PORT GPIOB
-#define DHT11_PIN GPIO_PIN_9
 uint8_t RHI, RHD, TCI, TCD, SUM;
 uint32_t pMillis, cMillis;
 float tCelsius = 0;
@@ -210,6 +210,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	}
 }
 
+int a2i(uint8_t* txt)
+{
+    int sum, i;
+    sum = 0;
+    for (i = 0; i < (uint8_t)sizeof(txt); i++) {
+//        digit = txt[i] - 0x30;
+        sum = (sum * 10) + (txt[i] - '0');
+    }
+    return sum;
+}
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	if (huart->Instance == huart1.Instance) {
 		HAL_UART_Receive_IT(&huart1, msg, sizeof(msg));
@@ -334,6 +345,7 @@ int main(void)
 					sensor_mode_flag=false;
 		      }
 		    }
+
 		 HAL_Delay(1000);
     /* USER CODE END WHILE */
 

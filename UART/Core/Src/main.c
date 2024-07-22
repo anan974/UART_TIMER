@@ -29,7 +29,7 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-// first change
+// reset
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/

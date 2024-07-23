@@ -48,15 +48,28 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-uint32_t waiting;
-uint32_t previous_tim = 0;
-uint32_t current_tim = 0;
-uint8_t msg[1];
-uint8_t led[5] ={LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin};
-bool on_led = false,
-	 led_reverse_flag = false,
-	 sensor_mode_flag = false;
-uint32_t ADC_VAL =0;
+uint8_t counter_from_x[5]; // 0 --> 10,000
+uint8_t duty_cycle_num[20];
+int counter = 0;
+int choice = 0;
+int prev_choice;
+uint32_t counter_in_callback;
+uint8_t msg1[1];
+uint8_t nhap_lai[]="\nNhap lai";
+uint8_t blinking_mode[20] = "\nBlinking Mode";
+uint8_t modulation_mode[20] = "\nModulation Mode";
+uint8_t stop_modulation_mode[42] = "\nStop Modulation Mode";
+uint8_t stop_blinking_mode[42] = "\nStop Blinking Mode";
+uint8_t be_on_operation[100] = "\nSelected Mode Is On Operation";
+uint16_t capture = 0;
+uint32_t counter_increment;
+uint8_t logg[100] ="\n7.Blinking Mode\n8. Modulation Mode";
+
+// mode flag
+bool modulation_flag;
+bool blinking_flag;
+bool choice_flag = true;
+bool stop_flag;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,210 +79,20 @@ static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
+int a2i(uint8_t*);
+void StartModulationMode();
+void StopModulationMode();
+void StartBlinkingMode(int);
+void StopBlinkingMode();
+void ChooseModeHandler(); // choose mode while another mode's on operation
+void ChooseMode(); // choose mode when no modes on operation (initially)
+void ChangeMode();
+void StopMode();
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define DHT11_PORT GPIOB
-#define DHT11_PIN GPIO_PIN_9
-uint8_t RHI, RHD, TCI, TCD, SUM;
-uint32_t pMillis, cMillis;
-float tCelsius = 0;
-float tFahrenheit = 0;
-float RH = 0;
-uint8_t TFI = 0;
-uint8_t TFD = 0;
-char strCopy[15];
-
-void microDelay (uint16_t delay)
-{
-  __HAL_TIM_SET_COUNTER(&htim2, 0);
-  while (__HAL_TIM_GET_COUNTER(&htim2) < delay);
-}
-
-uint8_t DHT11_Start (void)
-{
-  uint8_t Response = 0;
-  GPIO_InitTypeDef GPIO_InitStructPrivate = {0};
-  GPIO_InitStructPrivate.Pin = DHT11_PIN;
-  GPIO_InitStructPrivate.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStructPrivate.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStructPrivate.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(DHT11_PORT, &GPIO_InitStructPrivate); // set the pin as output
-  HAL_GPIO_WritePin (DHT11_PORT, DHT11_PIN, 0);   // pull the pin low
-  HAL_Delay(20);   // wait for 20ms
-  HAL_GPIO_WritePin (DHT11_PORT, DHT11_PIN, 1);   // pull the pin high
-  microDelay (30);   // wait for 30us
-  GPIO_InitStructPrivate.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStructPrivate.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(DHT11_PORT, &GPIO_InitStructPrivate); // set the pin as input
-  microDelay (40);
-  if (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)))
-  {
-    microDelay (80);
-    if ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN))) Response = 1;
-  }
-  pMillis = HAL_GetTick();
-  cMillis = HAL_GetTick();
-  while ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
-  {
-    cMillis = HAL_GetTick();
-  }
-  return Response;
-}
-
-uint8_t DHT11_Read (void)
-{
-  uint8_t a,b;
-  for (a=0;a<8;a++)
-  {
-    pMillis = HAL_GetTick();
-    cMillis = HAL_GetTick();
-    while (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
-    {  // wait for the pin to go high
-      cMillis = HAL_GetTick();
-    }
-    microDelay (40);   // wait for 40 us
-    if (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)))   // if the pin is low
-      b&= ~(1<<(7-a));
-    else
-      b|= (1<<(7-a));
-    pMillis = HAL_GetTick();
-    cMillis = HAL_GetTick();
-    while ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
-    {  // wait for the pin to go low
-      cMillis = HAL_GetTick();
-    }
-  }
-  return b;
-}
-
-void Read_RH(void) {
-	char cmd[30];
-	sprintf(cmd,"Rh: %2.f",RH);
-	HAL_UART_Transmit(&huart1,(uint8_t*)cmd,(uint8_t)strlen(cmd), 100);
-	uint8_t pct[]="%\n";
-	HAL_UART_Transmit(&huart1,(uint8_t*)pct,(uint8_t)sizeof(pct), 100);
-}
-
-void Read_Temp(void) {
-	char cmd[30];
-	sprintf(cmd,"Temp: %2.f C",tCelsius);
-	HAL_UART_Transmit(&huart1,(uint8_t*)cmd,(uint8_t)strlen(cmd), 100);
-}
-
-
-void On_Off(void) {
-	if (on_led) {
-		for (int i = 0; i < 5; i++) {
-			HAL_GPIO_WritePin(LED2_GPIO_Port, led[i], 1);
-		}
-		uint8_t on[] = "LEDs TURNED ON\n";
-		HAL_UART_Transmit(&huart1, on, sizeof(on), 100);
-	} else {
-		for (int i = 0; i < 5; i++) {
-			HAL_GPIO_WritePin(LED2_GPIO_Port, led[i], 0);
-			uint8_t off[] = "LEDs TURNED OFF\n";
-			HAL_UART_Transmit(&huart1, off, sizeof(off), 100);
-		}
-	}
-}
-
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	previous_tim = current_tim;
-	current_tim = HAL_GetTick();
-	waiting=(current_tim-previous_tim)/1000;
-	if (htim->Instance == htim1.Instance) {
-		char onled[60];
-		uint8_t offled[] = "LED OFF\n";
-		sprintf(onled,"LED ON. CYCLE: %lu s\n",waiting);
-		HAL_UART_Transmit(&huart1, (uint8_t*)onled, (uint8_t)strlen(onled), 100);
-		if (!led_reverse_flag) {
-			for (int i = 0; i < 5; i++) {
-				HAL_GPIO_WritePin(LED2_GPIO_Port, led[i], 1);
-				for (int i = 0; i < 2000; i++) {
-					for (int j = 0; j < 500; j++) {
-					}
-				}
-			}
-		} else {
-			for (int i = 4; i >= 0; i--) {
-				HAL_GPIO_WritePin(LED2_GPIO_Port, led[i], 1);
-				for (int i = 0; i < 2000; i++) {
-					for (int j = 0; j < 500; j++) {
-					}
-				}
-			}
-		}
-
-		for (int i = 0; i < 5; i++) {
-			HAL_GPIO_TogglePin(LED2_GPIO_Port, led[i]);
-		}
-		HAL_UART_Transmit(&huart1, offled, sizeof(offled), 100);
-	}
-}
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	if (huart->Instance == huart1.Instance) {
-		HAL_UART_Receive_IT(&huart1, msg, sizeof(msg));
-		char cmd[20];
-		int x = atoi(msg);
-		switch (x) {
-		case 1:
-			if (on_led) {
-				on_led = false;
-				sprintf(cmd, "Off Mode\n");
-				HAL_UART_Transmit(&huart1, (uint8_t*) cmd,
-						(uint8_t) strlen(cmd), 100);
-			} else {
-				on_led = true;
-				sprintf(cmd, "On Mode\n");
-				HAL_UART_Transmit(&huart1, (uint8_t*) cmd,
-						(uint8_t) strlen(cmd), 100);
-			}
-			On_Off();
-			break;
-		case 2:
-			led_reverse_flag = false;
-			current_tim = HAL_GetTick();
-			__HAL_TIM_SET_AUTORELOAD(&htim1, 24000 - 1);
-			HAL_TIM_Base_Start_IT(&htim1);
-			sprintf(cmd, "Waiting 20s mode\n");
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
-					100);
-			break;
-		case 3:
-			led_reverse_flag = true;
-			current_tim = HAL_GetTick();
-			__HAL_TIM_SET_AUTORELOAD(&htim1, 12000 - 1);
-			HAL_TIM_Base_Start_IT(&htim1);
-			sprintf(cmd, "Waiting 10s mode\n");
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
-					100);
-			break;
-		case 4:
-			sprintf(cmd, "Stop waiting mode\n");
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) strlen(cmd),
-					100);
-			HAL_TIM_Base_Stop_IT(&htim1);
-			__HAL_TIM_SET_COUNTER(&htim1,0);
-			break;
-		case 5:
-			uint8_t cmd[] = "Read Sensor mode\n";
-			HAL_UART_Transmit(&huart1, (uint8_t*) cmd, (uint8_t) sizeof(cmd),100);
-			sensor_mode_flag = true;
-			break;
-		default:
-			uint8_t nhaplai[] = "Error\n";
-			HAL_UART_Transmit(&huart1, nhaplai, sizeof(nhaplai), 100);
-			break;
-		}
-	}
-}
-
-
-
 
 /* USER CODE END 0 */
 
@@ -306,39 +129,44 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart1, msg, sizeof(msg));
+  HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
   HAL_TIM_Base_Start(&htim2);
+  HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
-		 if(DHT11_Start())
-		    {
-		      RHI = DHT11_Read(); // Relative humidity integral
-		      RHD = DHT11_Read(); // Relative humidity decimal
-		      TCI = DHT11_Read(); // Celsius integral
-		      TCD = DHT11_Read(); // Celsius decimal
-		      SUM = DHT11_Read(); // Check sum
-		      if (RHI + RHD + TCI + TCD == SUM)
-		      {
-		        // Can use RHI and TCI for any purposes if whole number only needed
-		        tCelsius = (float)TCI + (float)(TCD/10.0);
-		        tFahrenheit = tCelsius * 9/5 + 32;
-		        RH = (float)RHI + (float)(RHD/10.0);
-		      }
-		      if (sensor_mode_flag) {
-					Read_RH();
-					HAL_Delay(500);
-					Read_Temp();
-					sensor_mode_flag=false;
-		      }
-		    }
-		 HAL_Delay(1000);
-    /* USER CODE END WHILE */
+//		if(stop_flag)
+//				{
+//					if(modulation_flag) StopModulationMode();
+//					else if(blinking_flag) StopBlinkingMode();
+//					stop_flag = false;
+//					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, 0);
+////				}
+//		switch (choice)
+//				{
+//						case 0:
+//							HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
+//							choice = -1;
+//							choice_flag = false;
+//							break;
+//						case 8:
+//							StartModulationMode();
+//							choice_flag = false;
+//						case 9:
+//							break;
+//						default:
+//							if (choice!=-1)
+//							{
+//								HAL_UART_Transmit(&huart1, nhap_lai, sizeof(nhap_lai), HAL_MAX_DELAY);
+//								choice = 0;
+//							}
+//				}
 
-    /* USER CODE BEGIN 3 */
+    /* USER CODE END WHILE */
 	}
+    /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
 }
 
@@ -441,14 +269,16 @@ static void MX_TIM2_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_ClearInputConfigTypeDef sClearInputConfig = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 72-1;
+  htim2.Init.Prescaler = 720 - 1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 65535;
+  htim2.Init.Period = 10000 - 1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -460,15 +290,48 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  __HAL_TIM_DISABLE_OCxPRELOAD(&htim2, TIM_CHANNEL_3);
+  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse = 5000 - 1;
+  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClearInputConfig.ClearInputState = ENABLE;
+  sClearInputConfig.ClearInputSource = TIM_CLEARINPUTSOURCE_ETR;
+  sClearInputConfig.ClearInputPolarity = TIM_CLEARINPUTPOLARITY_NONINVERTED;
+  sClearInputConfig.ClearInputPrescaler = TIM_CLEARINPUTPRESCALER_DIV1;
+  sClearInputConfig.ClearInputFilter = 0;
+  if (HAL_TIM_ConfigOCrefClear(&htim2, &sClearInputConfig, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
 
 }
 
@@ -549,6 +412,141 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void StartModulationMode()
+{
+//	if(blinking_flag) return;
+	HAL_UART_Transmit_IT(&huart1, modulation_mode, sizeof(modulation_mode));
+	modulation_flag = true;
+	HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_3);
+	uint8_t duty_cycle;
+	for(uint32_t i = 0; i < 10001; i = i + 100)
+	{
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);
+		duty_cycle = __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_3) * 0.01;
+		sprintf(duty_cycle_num , "Duty cycle : %d\n", duty_cycle);
+		HAL_UART_Transmit_IT(&huart1, duty_cycle_num, sizeof(duty_cycle_num));
+		HAL_Delay(400);
+	}
+}
+
+
+void StopModulationMode()
+{
+	if(!modulation_flag) return;
+	modulation_flag = false;
+	choice = 0;
+	HAL_TIM_PWM_Stop_IT(&htim2, TIM_CHANNEL_3);
+	HAL_UART_Transmit_IT(&huart1, stop_modulation_mode, sizeof(stop_modulation_mode));
+}
+
+void StartBlinkingMode(int x)
+{
+	if(modulation_flag) return;
+	blinking_flag = true;
+	HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_4);
+	__HAL_TIM_SET_COUNTER(&htim2, x);
+}
+
+void StopBlinkingMode()
+{
+	if(!blinking_flag) return;
+	HAL_UART_Transmit_IT(&huart1, stop_blinking_mode, sizeof(stop_blinking_mode));
+	blinking_flag = false;
+	HAL_TIM_OC_Stop_IT(&htim2, TIM_CHANNEL_4);
+	choice = 0;
+}
+
+int a2i(uint8_t* txt)
+{
+    int sum, digit, i;
+    sum = 0;
+    for (i = 0; i < strlen(txt); i++) {
+//        digit = txt[i] - 0x30;
+        sum = (sum * 10) + (txt[i] - '0');
+    }
+    return sum;
+}
+
+void ChooseModeHandler()
+{
+	if(choice == 9)
+	{
+		StopMode();
+		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+	}
+	else if((modulation_flag && choice == 8) || (blinking_flag && choice == 7))
+	{
+		HAL_UART_Transmit_IT(&huart1, be_on_operation, sizeof(be_on_operation));
+		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+	}
+	else ChangeMode();
+//	HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+}
+
+void ChooseMode()
+{
+	switch(choice)
+	{
+		case 0:
+			HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
+			break;
+		case 7:
+			HAL_UART_Transmit(&huart1, blinking_mode, sizeof(blinking_mode), HAL_MAX_DELAY);
+			HAL_UART_Receive(&huart1, counter_from_x, sizeof(counter_from_x), HAL_MAX_DELAY);
+			counter = a2i(counter_from_x);
+			StartBlinkingMode(counter);
+			break;
+		case 8:
+			StartModulationMode();
+			break;
+		default:
+			HAL_UART_Transmit(&huart1, nhap_lai, sizeof(nhap_lai), HAL_MAX_DELAY);
+			choice = 0;
+			break;
+	}
+	HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+}
+
+void ChangeMode()
+{
+	if(modulation_flag)
+	{
+		HAL_Delay(5000);
+		StopModulationMode();
+		ChooseMode();
+	}
+	else if(blinking_flag)
+	{
+		StopBlinkingMode();
+		ChooseMode();
+	}
+}
+
+void StopMode()
+{
+	if(modulation_flag) StopModulationMode();
+	else if(blinking_flag) StopBlinkingMode();
+}
+
+
+void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim->Instance == TIM2 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
+	{
+		__HAL_TIM_SET_COUNTER(&htim2, counter);
+	}
+}
+
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance==huart1.Instance)
+  {
+	  choice = a2i(msg1);
+	  if(modulation_flag || blinking_flag) ChooseModeHandler();
+	  else ChooseMode();
+  }
+}
 
 /* USER CODE END 4 */
 

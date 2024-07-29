@@ -48,28 +48,29 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-uint8_t counter_from_x[5]; // 0 --> 10,000
-uint8_t duty_cycle_num[20];
-int counter = 0;
-int choice = 0;
-int prev_choice;
-uint32_t counter_in_callback;
-uint8_t msg1[1];
-uint8_t nhap_lai[]="\nNhap lai";
-uint8_t blinking_mode[20] = "\nBlinking Mode";
-uint8_t modulation_mode[20] = "\nModulation Mode";
-uint8_t stop_modulation_mode[42] = "\nStop Modulation Mode";
-uint8_t stop_blinking_mode[42] = "\nStop Blinking Mode";
-uint8_t be_on_operation[100] = "\nSelected Mode Is On Operation";
-uint16_t capture = 0;
-uint32_t counter_increment;
-uint8_t logg[100] ="\n7.Blinking Mode\n8. Modulation Mode";
+int 					counter = 0;
+int 					choice = 0;
+int 					prev_choice = -1;
+uint8_t 				counter_from_x[5]; // 0 --> 10,000
+uint8_t 				duty_cycle;
+uint8_t 				duty_cycle_num[20];
+uint8_t 				msg1[1];
+uint8_t 				nhap_lai[]="\nNhap lai";
+uint8_t 				blinking_mode[40] = "\nBlinking Mode\nNhap counter : ";
+uint8_t 				modulation_mode[20] = "\nModulation Mode";
+uint8_t 				stop_modulation_mode[42] = "\nStop Modulation Mode";
+uint8_t 				stop_blinking_mode[42] = "\nStop Blinking Mode";
+uint8_t 				be_on_operation[100] = "\nSelected Mode Is On Operation";
+uint8_t 				logg[100] ="\n7.Blinking Mode\n8. Modulation Mode";
+uint16_t 				capture = 0;
+uint32_t 				counter_in_callback;
+uint32_t 				counter_increment;
 
 // mode flag
-bool modulation_flag;
-bool blinking_flag;
-bool choice_flag = true;
-bool stop_flag;
+bool 					modulation_flag;
+bool 					blinking_flag;
+bool 					choice_flag = true;
+bool 					stop_flag;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -82,7 +83,7 @@ static void MX_TIM2_Init(void);
 int a2i(uint8_t*);
 void StartModulationMode();
 void StopModulationMode();
-void StartBlinkingMode(int);
+void StartBlinkingMode();
 void StopBlinkingMode();
 void ChooseModeHandler(); // choose mode while another mode's on operation
 void ChooseMode(); // choose mode when no modes on operation (initially)
@@ -129,40 +130,17 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
-  HAL_TIM_Base_Start(&htim2);
-  HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 	while (1) {
-//		if(stop_flag)
-//				{
-//					if(modulation_flag) StopModulationMode();
-//					else if(blinking_flag) StopBlinkingMode();
-//					stop_flag = false;
-//					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, 0);
-////				}
-//		switch (choice)
-//				{
-//						case 0:
-//							HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
-//							choice = -1;
-//							choice_flag = false;
-//							break;
-//						case 8:
-//							StartModulationMode();
-//							choice_flag = false;
-//						case 9:
-//							break;
-//						default:
-//							if (choice!=-1)
-//							{
-//								HAL_UART_Transmit(&huart1, nhap_lai, sizeof(nhap_lai), HAL_MAX_DELAY);
-//								choice = 0;
-//							}
-//				}
+		if(prev_choice != choice)
+		{
+			prev_choice = choice;
+			if(modulation_flag || blinking_flag) ChooseModeHandler();
+			else ChooseMode();
+		}
 
     /* USER CODE END WHILE */
 	}
@@ -418,15 +396,16 @@ void StartModulationMode()
 	HAL_UART_Transmit_IT(&huart1, modulation_mode, sizeof(modulation_mode));
 	modulation_flag = true;
 	HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_3);
-	uint8_t duty_cycle;
-	for(uint32_t i = 0; i < 10001; i = i + 100)
+	while (choice == 8 && modulation_flag)
 	{
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);
-		duty_cycle = __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_3) * 0.01;
-		sprintf(duty_cycle_num , "Duty cycle : %d\n", duty_cycle);
-		HAL_UART_Transmit_IT(&huart1, duty_cycle_num, sizeof(duty_cycle_num));
-		HAL_Delay(400);
+		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+		for (uint32_t i = 0; i < 10001; i = i + 100)
+		{
+			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);
+			HAL_Delay(100);
+		}
 	}
+
 }
 
 
@@ -434,17 +413,21 @@ void StopModulationMode()
 {
 	if(!modulation_flag) return;
 	modulation_flag = false;
-	choice = 0;
 	HAL_TIM_PWM_Stop_IT(&htim2, TIM_CHANNEL_3);
 	HAL_UART_Transmit_IT(&huart1, stop_modulation_mode, sizeof(stop_modulation_mode));
 }
 
-void StartBlinkingMode(int x)
+void StartBlinkingMode()
 {
 	if(modulation_flag) return;
+	HAL_UART_Transmit(&huart1, blinking_mode, sizeof(blinking_mode), HAL_MAX_DELAY);
+	HAL_UART_Receive(&huart1, counter_from_x, sizeof(counter_from_x), HAL_MAX_DELAY);
+	counter = a2i(counter_from_x);
+	if(counter >= 10000) counter = 10000;
+	else if(counter <= 0) counter = 0;
 	blinking_flag = true;
 	HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_4);
-	__HAL_TIM_SET_COUNTER(&htim2, x);
+	__HAL_TIM_SET_COUNTER(&htim2, counter);
 }
 
 void StopBlinkingMode()
@@ -453,7 +436,6 @@ void StopBlinkingMode()
 	HAL_UART_Transmit_IT(&huart1, stop_blinking_mode, sizeof(stop_blinking_mode));
 	blinking_flag = false;
 	HAL_TIM_OC_Stop_IT(&htim2, TIM_CHANNEL_4);
-	choice = 0;
 }
 
 int a2i(uint8_t* txt)
@@ -472,15 +454,10 @@ void ChooseModeHandler()
 	if(choice == 9)
 	{
 		StopMode();
-		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
-	}
-	else if((modulation_flag && choice == 8) || (blinking_flag && choice == 7))
-	{
-		HAL_UART_Transmit_IT(&huart1, be_on_operation, sizeof(be_on_operation));
+		HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
 		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
 	}
 	else ChangeMode();
-//	HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
 }
 
 void ChooseMode()
@@ -491,10 +468,7 @@ void ChooseMode()
 			HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
 			break;
 		case 7:
-			HAL_UART_Transmit(&huart1, blinking_mode, sizeof(blinking_mode), HAL_MAX_DELAY);
-			HAL_UART_Receive(&huart1, counter_from_x, sizeof(counter_from_x), HAL_MAX_DELAY);
-			counter = a2i(counter_from_x);
-			StartBlinkingMode(counter);
+			StartBlinkingMode();
 			break;
 		case 8:
 			StartModulationMode();
@@ -509,17 +483,9 @@ void ChooseMode()
 
 void ChangeMode()
 {
-	if(modulation_flag)
-	{
-		HAL_Delay(5000);
-		StopModulationMode();
-		ChooseMode();
-	}
-	else if(blinking_flag)
-	{
-		StopBlinkingMode();
-		ChooseMode();
-	}
+	StopMode();
+	HAL_Delay(400);
+	ChooseMode();
 }
 
 void StopMode()
@@ -528,6 +494,16 @@ void StopMode()
 	else if(blinking_flag) StopBlinkingMode();
 }
 
+// Callback functions
+void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim->Instance == TIM2 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3)
+	{
+		duty_cycle = __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_3) * 0.01;
+		sprintf(duty_cycle_num , "Duty cycle : %d\n", duty_cycle);
+		HAL_UART_Transmit_IT(&huart1, duty_cycle_num, sizeof(duty_cycle_num));
+	}
+}
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -540,12 +516,16 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-  if (huart->Instance==huart1.Instance)
-  {
-	  choice = a2i(msg1);
-	  if(modulation_flag || blinking_flag) ChooseModeHandler();
-	  else ChooseMode();
-  }
+	if (huart->Instance == huart1.Instance)
+	{
+		choice = atoi(msg1);
+		if (choice == prev_choice)
+		{
+			HAL_UART_Transmit_IT(&huart1, be_on_operation,
+					sizeof(be_on_operation));
+			HAL_UART_Receive_IT(huart, msg1, sizeof(msg1));
+		}
+	}
 }
 
 /* USER CODE END 4 */

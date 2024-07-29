@@ -580,8 +580,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		char onled[60];
 		uint8_t offled[] = "Led off\n";
 		sprintf(onled,"Led on. Cycle: %lu ms\n",waiting);
-		HAL_UART_Transmit_IT(&huart1, (uint8_t*)onled, (uint8_t)strlen(onled));
-		if (__HAL_TIM_GET_AUTORELOAD(&htim1) == 24000 - 1) {
+		HAL_UART_Transmit(&huart1, (uint8_t*)onled, (uint8_t)strlen(onled),100);
+		if (__HAL_TIM_GET_AUTORELOAD(&htim1) == WAITING_20S - 1) {
 			for (int i = 0; i < NUMBER_OF_LED; i++) {
 				HAL_GPIO_WritePin(LED_PORT, led[i], 1);
 				for (int i = 0; i < 2000; i++) {
@@ -590,7 +590,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 				}
 			}
 		}
-		else if (__HAL_TIM_GET_AUTORELOAD(&htim1) == 12000 - 1)
+		else if (__HAL_TIM_GET_AUTORELOAD(&htim1) == WAITING_10S - 1)
 		{
 			for (int i = NUMBER_OF_LED - 1; i >= 0; i--)
 			{
@@ -605,7 +605,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		for (int i = 0; i < NUMBER_OF_LED; i++) {
 			HAL_GPIO_TogglePin(LED_PORT, led[i]);
 		}
-		HAL_UART_Transmit_IT(&huart1, offled, sizeof(offled));
+		HAL_UART_Transmit(&huart1, offled, sizeof(offled),100);
 	}
 }
 #if 0
@@ -673,13 +673,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 			stop_flag = true;
 		if ((waiting_flag && choice == prev_choice) || (modulation_flag && choice == 8) || (blinking_flag && choice == 7))
 		{
-			HAL_UART_Transmit(&huart1, be_on_operation, sizeof(be_on_operation), 100);
+			HAL_UART_Transmit_IT(&huart1, be_on_operation, sizeof(be_on_operation));
 			choice_flag = false;
 		}
 		else if ((waiting_flag && choice != prev_choice) || (on_led_flag && choice != prev_choice))
 		{
-			HAL_UART_Transmit(&huart1, interrupt_the_mode,
-					sizeof(interrupt_the_mode), 100);
+			HAL_UART_Transmit_IT(&huart1, interrupt_the_mode,sizeof(interrupt_the_mode));
 			stop_flag = true;
 			choice_flag = true;
 		}

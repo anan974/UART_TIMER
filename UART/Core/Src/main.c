@@ -55,7 +55,6 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
 int 					counter 					= 0;
 int 					choice 						= 0;
 int 					prev_choice 				= -1;
@@ -81,7 +80,7 @@ uint8_t  				stop_waiting_mode[]      	= "Stop waiting mode\n"				;
 uint8_t  				read_sensor_mode[]       	= "Read sensor mode\n"				;
 uint8_t 				interrupt_the_mode[100]  	= "Stop running current mode\n"		;
 uint8_t  				logg[200]                	= "\n1. On/off mode\n2. Waiting 10s mode\n3. Waiting 20s mode\
-														n4. Reading sensor mode\n5. Blinking Mode\n6. Modulation Mode\n9. Stop";
+													   \n4. Reading sensor mode\n5. Blinking Mode\n6. Modulation Mode\n9. Stop";
 ///
 uint32_t 				waiting;
 uint32_t 				previous_tim           		= 0									;
@@ -507,7 +506,7 @@ void StartModulationMode()
 void StopModulationMode()
 {
 	if(!modulation_flag) return;
-	HAL_UART_Transmit_IT(&huart1, stop_modulation_mode, sizeof(stop_modulation_mode));
+	HAL_UART_Transmit(&huart1, stop_modulation_mode, sizeof(stop_modulation_mode), HAL_MAX_DELAY);
 	HAL_TIM_PWM_Stop_IT(&htim3, TIM_CHANNEL_2);
 	modulation_flag = false;
 }
@@ -515,7 +514,7 @@ void StopModulationMode()
 void StartBlinkingMode()
 {
 	if(modulation_flag) return;
-	HAL_UART_Transmit_IT(&huart1, blinking_mode, sizeof(blinking_mode));
+	HAL_UART_Transmit(&huart1, blinking_mode, sizeof(blinking_mode), HAL_MAX_DELAY);
 	HAL_UART_Receive(&huart1, counter_from_x, sizeof(counter_from_x), HAL_MAX_DELAY);
 	counter = a2i(counter_from_x);
 	if(counter >= 10000) counter = 10000;
@@ -529,6 +528,7 @@ void StopBlinkingMode()
 {
 	if(!blinking_flag) return;
 	HAL_UART_Transmit_IT(&huart1, stop_blinking_mode, sizeof(stop_blinking_mode));
+	counter = 0;
 	blinking_flag = false;
 	HAL_TIM_OC_Stop_IT(&htim3, TIM_CHANNEL_1);
 }
@@ -549,7 +549,7 @@ void ChooseModeHandler()
 	if(choice == 9)
 	{
 		StopMode();
-		HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
+		HAL_UART_Transmit(&huart1, logg, sizeof(logg), HAL_MAX_DELAY);
 		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
 	}
 
@@ -564,10 +564,9 @@ void ChooseMode()
 			HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
 			break;
 		case 1:
-			if (!on_led_flag) On_led();
-			else Off_led();
+			On_led();
 			break;
-		case 2:
+		case 	2:
 			HAL_UART_Transmit_IT(&huart1, waiting_20s_mode, sizeof(waiting_20s_mode));
 			Waiting_Mode_Set(WAITING_20S);
 			break;
@@ -601,7 +600,6 @@ void ChooseMode()
 void ChangeMode()
 {
 	StopMode();
-	HAL_Delay(400);
 	ChooseMode();
 }
 
@@ -781,7 +779,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 			HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
 			HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
 		}
-		else if (choice == prev_choice)
+		else if (choice != 9 && choice == prev_choice)
 		{
 			HAL_UART_Transmit_IT(&huart1, be_on_operation,
 					sizeof(be_on_operation));

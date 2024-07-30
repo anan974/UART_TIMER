@@ -133,15 +133,15 @@ void 				StopMode();
 
 // ##### AN's function initialization #####
 void 				microDelay (uint16_t);
-uint8_t 			DHT11_Start ();
-uint8_t 			DHT11_Read ();
-void 				Read_RH();
-void 				Read_Temp();
-void 				Waiting_Mode_Set(uint32_t);
-void 				Stop_Waiting_Mode();
-void 				On_led();
-void 				Off_led();
-void 				readSensor();
+uint8_t 			dht11Start ();
+uint8_t 			dht11Read ();
+void 				readRH();
+void 				readTemp();
+void 				waitingModeSet(uint32_t);
+void 				stopWaitingMode();
+void 				onLed();
+void 				offLed();
+void 				dht11Calculate();
 
 /* USER CODE END PFP */
 
@@ -203,9 +203,10 @@ int main(void)
 		}
 
     /* USER CODE END WHILE */
-	}
+
     /* USER CODE BEGIN 3 */
   /* USER CODE END 3 */
+	}
 }
 
 /**
@@ -312,9 +313,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 720 - 1;
+  htim2.Init.Prescaler = 72 - 1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 10000 - 1;
+  htim2.Init.Period = 65535;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -488,7 +489,7 @@ static void MX_GPIO_Init(void)
 void StartModulationMode()
 {
 //	if(blinking_flag) return;
-	HAL_UART_Transmit_IT(&huart1, modulation_mode, sizeof(modulation_mode));
+	HAL_UART_Transmit(&huart1, modulation_mode, sizeof(modulation_mode),HAL_MAX_DELAY);
 	modulation_flag = true;
 	HAL_TIM_PWM_Start_IT(&htim3, TIM_CHANNEL_2);
 	while (choice == 6 && modulation_flag)
@@ -564,22 +565,22 @@ void ChooseMode()
 			HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
 			break;
 		case 1:
-			On_led();
+			onLed();
 			break;
-		case 	2:
+		case 2:
 			HAL_UART_Transmit_IT(&huart1, waiting_20s_mode, sizeof(waiting_20s_mode));
-			Waiting_Mode_Set(WAITING_20S);
+			waitingModeSet(WAITING_20S);
 			break;
 		case 3:
 			HAL_UART_Transmit_IT(&huart1, waiting_10s_mode, sizeof(waiting_10s_mode));
-			Waiting_Mode_Set(WAITING_10S);
+			waitingModeSet(WAITING_10S);
 			break;
 		case 4:
 			HAL_UART_Transmit_IT(&huart1, read_sensor_mode, sizeof(read_sensor_mode));
 			HAL_Delay(200);
-			Read_RH();
+			readRH();
 			HAL_Delay(200);
-			Read_Temp();
+			readTemp();
 			break;
 		case 5:
 			StartBlinkingMode();
@@ -600,6 +601,7 @@ void ChooseMode()
 void ChangeMode()
 {
 	StopMode();
+	HAL_Delay(200);
 	ChooseMode();
 }
 
@@ -607,8 +609,8 @@ void StopMode()
 {
 	if(modulation_flag) StopModulationMode();
 	else if(blinking_flag) StopBlinkingMode();
-	else if (waiting_flag) Stop_Waiting_Mode();
-	else Off_led();
+	else if (waiting_flag) stopWaitingMode();
+	else offLed();
 }
 
 // ##### AN's function definition #####
@@ -618,7 +620,7 @@ void microDelay (uint16_t delay)
   while (__HAL_TIM_GET_COUNTER(&htim2) < delay);
 }
 
-uint8_t DHT11_Start (void)
+uint8_t dht11Start (void)
 {
   uint8_t Response = 0;
   GPIO_InitTypeDef GPIO_InitStructPrivate = {0};
@@ -649,7 +651,7 @@ uint8_t DHT11_Start (void)
   return Response;
 }
 
-uint8_t DHT11_Read (void)
+uint8_t dht11Read (void)
 {
   uint8_t a,b;
   for (a=0;a<8;a++)
@@ -675,7 +677,7 @@ uint8_t DHT11_Read (void)
   return b;
 }
 
-void Read_RH(void)
+void readRH(void)
 {
 	char cmd[30];
 	sprintf(cmd,"Rh: %2.f",RH);
@@ -684,22 +686,22 @@ void Read_RH(void)
 	HAL_UART_Transmit(&huart1,(uint8_t*)pct,(uint8_t)sizeof(pct),100);
 }
 
-void Read_Temp(void)
+void readTemp(void)
 {
 	char cmd[30];
 	sprintf(cmd,"Temp: %2.f C",tCelsius);
 	HAL_UART_Transmit(&huart1,(uint8_t*)cmd,(uint8_t)strlen(cmd),100);
 }
 
-void readSensor(void)
+void dht11Calculate(void)
 {
-	if (DHT11_Start())
+	if (dht11Start())
 	{
-		RHI = DHT11_Read(); // Relative humidity integral
-		RHD = DHT11_Read(); // Relative humidity decimal
-		TCI = DHT11_Read(); // Celsius integral
-		TCD = DHT11_Read(); // Celsius decimal
-		SUM = DHT11_Read(); // Check sum
+		RHI = dht11Read(); // Relative humidity integral
+		RHD = dht11Read(); // Relative humidity decimal
+		TCI = dht11Read(); // Celsius integral
+		TCD = dht11Read(); // Celsius decimal
+		SUM = dht11Read(); // Check sum
 		if (RHI + RHD + TCI + TCD == SUM)
 		{
 			// Can use RHI and TCI for any purposes if whole number only needed
@@ -710,7 +712,7 @@ void readSensor(void)
 	}
 }
 
-void On_led(void)
+void onLed(void)
 {
 	HAL_UART_Transmit_IT(&huart1, on_led_mode, sizeof(on_led_mode));
 	for (int i = 0; i < NUMBER_OF_LED; i++)
@@ -720,7 +722,7 @@ void On_led(void)
 	on_led_flag = true;
 }
 
-void Off_led(void)
+void offLed(void)
 {
 	HAL_UART_Transmit_IT(&huart1, off_led_mode, sizeof(off_led_mode));
 	for (int i = 0; i < NUMBER_OF_LED; i++)
@@ -731,7 +733,7 @@ void Off_led(void)
 }
 
 
-void Stop_Waiting_Mode(void)
+void stopWaitingMode(void)
 {
 	HAL_TIM_Base_Stop_IT(&htim1);
 	if (__HAL_TIM_GET_COUNTER(&htim1))
@@ -739,9 +741,9 @@ void Stop_Waiting_Mode(void)
 	waiting_flag = false;
 }
 
-void Waiting_Mode_Set(uint32_t time)
+void waitingModeSet(uint32_t time)
 {
-	Stop_Waiting_Mode();
+	stopWaitingMode();
 	current_tim = HAL_GetTick();
 	waiting_flag= true;
 	__HAL_TIM_SET_AUTORELOAD(&htim1, time - 1);

@@ -34,6 +34,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define DHT11_PORT GPIOB
+#define DHT11_PIN  GPIO_PIN_9
+#define LED_PORT   GPIOA
+#define NUMBER_OF_LED 5
+#define WAITING_20S 24000
+#define WAITING_10S 12000
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -44,33 +50,67 @@
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-int 					counter = 0;
-int 					choice = 0;
-int 					prev_choice = -1;
+
+int 					counter 					= 0;
+int 					choice 						= 0;
+int 					prev_choice 				= -1;
 uint8_t 				counter_from_x[5]; // 0 --> 10,000
 uint8_t 				duty_cycle;
 uint8_t 				duty_cycle_num[20];
 uint8_t 				msg1[1];
-uint8_t 				nhap_lai[]="\nNhap lai";
-uint8_t 				blinking_mode[40] = "\nBlinking Mode\nNhap counter : ";
-uint8_t 				modulation_mode[20] = "\nModulation Mode";
-uint8_t 				stop_modulation_mode[42] = "\nStop Modulation Mode";
-uint8_t 				stop_blinking_mode[42] = "\nStop Blinking Mode";
-uint8_t 				be_on_operation[100] = "\nSelected Mode Is On Operation";
-uint8_t 				logg[100] ="\n7.Blinking Mode\n8. Modulation Mode";
-uint16_t 				capture = 0;
-uint32_t 				counter_in_callback;
-uint32_t 				counter_increment;
+uint8_t 				nhap_lai[]					= "\nType again :"					;
+uint8_t 				blinking_mode[40] 			= "\nBlinking Mode\nNhap counter : ";
+uint8_t 				modulation_mode[20] 		= "\nModulation Mode"				;
+uint8_t 				stop_modulation_mode[42]	= "\nStop Modulation Mode"			;
+uint8_t 				stop_blinking_mode[42]  	= "\nStop Blinking Mode"			;
+uint8_t 				be_on_operation[42]    		= "\nSelected Mode Is On Operation" ;
+uint8_t 				no_mode_on_operation[42]	= "\nNo mode on operation"			;
+
+
+// ##### AN's global vars #####
+const uint8_t  			on_led_mode[]      		 	= "On led mode\n"					;
+const uint8_t  			off_led_mode[]    		 	= "Off led mode\n"					;
+uint8_t  				waiting_20s_mode[]      	= "Waiting 20s mode\n"				;
+uint8_t  				waiting_10s_mode[]       	= "Waiting 10s mode\n"				;
+uint8_t  				stop_waiting_mode[]      	= "Stop waiting mode\n"				;
+uint8_t  				read_sensor_mode[]       	= "Read sensor mode\n"				;
+uint8_t 				interrupt_the_mode[100]  	= "Stop running current mode\n"		;
+uint8_t  				logg[200]                	= "\n1. On/off mode\n2. Waiting 10s mode\n3. Waiting 20s mode\
+														n4. Reading sensor mode\n5. Blinking Mode\n6. Modulation Mode\n9. Stop";
+///
+uint32_t 				waiting;
+uint32_t 				previous_tim           		= 0									;
+uint32_t 				current_tim             	= 0									;
+uint8_t 				led[5]                   	= {LED1_Pin,LED2_Pin,LED3_Pin,LED4_Pin,LED5_Pin};
 
 // mode flag
-bool 					modulation_flag;
-bool 					blinking_flag;
-bool 					choice_flag = true;
+bool 					modulation_flag				;
+bool 					blinking_flag				;
+bool 					choice_flag = true			;
 bool 					stop_flag;
+
+
+// ##### AN's mode flag #####
+bool    				stop_flag					;
+bool    				on_led_flag					;
+bool    				waiting_flag				;
+
+//sensor
+uint8_t  				RHI, RHD, TCI, TCD, SUM;
+uint32_t 				pMillis, cMillis;
+float    				tCelsius                	= 0;
+float    				tFahrenheit             	= 0;
+float    				RH                      	= 0;
+uint8_t  				TFI                     	= 0;
+uint8_t  				TFD                     	= 0;
+char     				strCopy[15];
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -79,16 +119,30 @@ static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
-int a2i(uint8_t*);
-void StartModulationMode();
-void StopModulationMode();
-void StartBlinkingMode();
-void StopBlinkingMode();
-void ChooseModeHandler(); // choose mode while another mode's on operation
-void ChooseMode(); // choose mode when no modes on operation (initially)
-void ChangeMode();
-void StopMode();
+
+int  				a2i(uint8_t*);
+void 				StartModulationMode();
+void 				StopModulationMode();
+void 				StartBlinkingMode();
+void 				StopBlinkingMode();
+void 				ChooseModeHandler(); // choose mode while another mode's on operation
+void 				ChooseMode(); // choose mode when no modes on operation (initially)
+void 				ChangeMode();
+void 				StopMode();
+
+// ##### AN's function initialization #####
+void 				microDelay (uint16_t);
+uint8_t 			DHT11_Start ();
+uint8_t 			DHT11_Read ();
+void 				Read_RH();
+void 				Read_Temp();
+void 				Waiting_Mode_Set(uint32_t);
+void 				Stop_Waiting_Mode();
+void 				On_led();
+void 				Off_led();
+void 				readSensor();
 
 /* USER CODE END PFP */
 
@@ -129,7 +183,10 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start(&htim2);
+  HAL_TIM_Base_Start_IT(&htim1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -138,8 +195,12 @@ int main(void)
 		if(prev_choice != choice)
 		{
 			prev_choice = choice;
-			if(modulation_flag || blinking_flag) ChooseModeHandler();
+			if(modulation_flag || blinking_flag || waiting_flag || on_led_flag) ChooseModeHandler();
 			else ChooseMode();
+		}
+		else
+		{
+			HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
 		}
 
     /* USER CODE END WHILE */
@@ -247,8 +308,6 @@ static void MX_TIM2_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_ClearInputConfigTypeDef sClearInputConfig = {0};
 
   /* USER CODE BEGIN TIM2_Init 1 */
 
@@ -268,48 +327,83 @@ static void MX_TIM2_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  __HAL_TIM_DISABLE_OCxPRELOAD(&htim2, TIM_CHANNEL_3);
-  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
-  sConfigOC.Pulse = 5000 - 1;
-  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClearInputConfig.ClearInputState = ENABLE;
-  sClearInputConfig.ClearInputSource = TIM_CLEARINPUTSOURCE_ETR;
-  sClearInputConfig.ClearInputPolarity = TIM_CLEARINPUTPOLARITY_NONINVERTED;
-  sClearInputConfig.ClearInputPrescaler = TIM_CLEARINPUTPRESCALER_DIV1;
-  sClearInputConfig.ClearInputFilter = 0;
-  if (HAL_TIM_ConfigOCrefClear(&htim2, &sClearInputConfig, TIM_CHANNEL_3) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
-  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 720 - 1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 10000 - 1;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_OC_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+  HAL_TIM_MspPostInit(&htim3);
 
 }
 
@@ -390,43 +484,44 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+// function definition
 void StartModulationMode()
 {
 //	if(blinking_flag) return;
 	HAL_UART_Transmit_IT(&huart1, modulation_mode, sizeof(modulation_mode));
 	modulation_flag = true;
-	HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_3);
-	while (choice == 8 && modulation_flag)
+	HAL_TIM_PWM_Start_IT(&htim3, TIM_CHANNEL_2);
+	while (choice == 6 && modulation_flag)
 	{
 		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
-		for (uint32_t i = 0; i < 10001; i = i + 100)
+		for (uint32_t i = 0; i < 10001 && choice == 6; i = i + 100)
 		{
-			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);
+			__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, i);
 			HAL_Delay(100);
 		}
 	}
-
 }
 
 
 void StopModulationMode()
 {
 	if(!modulation_flag) return;
-	modulation_flag = false;
-	HAL_TIM_PWM_Stop_IT(&htim2, TIM_CHANNEL_3);
 	HAL_UART_Transmit_IT(&huart1, stop_modulation_mode, sizeof(stop_modulation_mode));
+	HAL_TIM_PWM_Stop_IT(&htim3, TIM_CHANNEL_2);
+	modulation_flag = false;
 }
 
 void StartBlinkingMode()
 {
 	if(modulation_flag) return;
-	HAL_UART_Transmit(&huart1, blinking_mode, sizeof(blinking_mode), HAL_MAX_DELAY);
+	HAL_UART_Transmit_IT(&huart1, blinking_mode, sizeof(blinking_mode));
 	HAL_UART_Receive(&huart1, counter_from_x, sizeof(counter_from_x), HAL_MAX_DELAY);
 	counter = a2i(counter_from_x);
 	if(counter >= 10000) counter = 10000;
 	else if(counter <= 0) counter = 0;
 	blinking_flag = true;
-	HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_4);
+	HAL_TIM_OC_Start_IT(&htim3, TIM_CHANNEL_1);
 	__HAL_TIM_SET_COUNTER(&htim2, counter);
 }
 
@@ -435,7 +530,7 @@ void StopBlinkingMode()
 	if(!blinking_flag) return;
 	HAL_UART_Transmit_IT(&huart1, stop_blinking_mode, sizeof(stop_blinking_mode));
 	blinking_flag = false;
-	HAL_TIM_OC_Stop_IT(&htim2, TIM_CHANNEL_4);
+	HAL_TIM_OC_Stop_IT(&htim3, TIM_CHANNEL_1);
 }
 
 int a2i(uint8_t* txt)
@@ -457,6 +552,7 @@ void ChooseModeHandler()
 		HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
 		HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
 	}
+
 	else ChangeMode();
 }
 
@@ -467,14 +563,35 @@ void ChooseMode()
 		case 0:
 			HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
 			break;
-		case 7:
+		case 1:
+			if (!on_led_flag) On_led();
+			else Off_led();
+			break;
+		case 2:
+			HAL_UART_Transmit_IT(&huart1, waiting_20s_mode, sizeof(waiting_20s_mode));
+			Waiting_Mode_Set(WAITING_20S);
+			break;
+		case 3:
+			HAL_UART_Transmit_IT(&huart1, waiting_10s_mode, sizeof(waiting_10s_mode));
+			Waiting_Mode_Set(WAITING_10S);
+			break;
+		case 4:
+			HAL_UART_Transmit_IT(&huart1, read_sensor_mode, sizeof(read_sensor_mode));
+			HAL_Delay(200);
+			Read_RH();
+			HAL_Delay(200);
+			Read_Temp();
+			break;
+		case 5:
 			StartBlinkingMode();
 			break;
-		case 8:
+		case 6:
 			StartModulationMode();
 			break;
+		case 9:
+			HAL_UART_Transmit_IT(&huart1, no_mode_on_operation, sizeof(no_mode_on_operation));
 		default:
-			HAL_UART_Transmit(&huart1, nhap_lai, sizeof(nhap_lai), HAL_MAX_DELAY);
+			HAL_UART_Transmit_IT(&huart1, nhap_lai, sizeof(nhap_lai));
 			choice = 0;
 			break;
 	}
@@ -492,14 +609,154 @@ void StopMode()
 {
 	if(modulation_flag) StopModulationMode();
 	else if(blinking_flag) StopBlinkingMode();
+	else if (waiting_flag) Stop_Waiting_Mode();
+	else Off_led();
 }
+
+// ##### AN's function definition #####
+void microDelay (uint16_t delay)
+{
+  __HAL_TIM_SET_COUNTER(&htim2, 0);
+  while (__HAL_TIM_GET_COUNTER(&htim2) < delay);
+}
+
+uint8_t DHT11_Start (void)
+{
+  uint8_t Response = 0;
+  GPIO_InitTypeDef GPIO_InitStructPrivate = {0};
+  GPIO_InitStructPrivate.Pin = DHT11_PIN;
+  GPIO_InitStructPrivate.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStructPrivate.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStructPrivate.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(DHT11_PORT, &GPIO_InitStructPrivate); // set the pin as output
+  HAL_GPIO_WritePin (DHT11_PORT, DHT11_PIN, 0);   // pull the pin low
+  HAL_Delay(20);   // wait for 20ms
+  HAL_GPIO_WritePin (DHT11_PORT, DHT11_PIN, 1);   // pull the pin high
+  microDelay (30);   // wait for 30us
+  GPIO_InitStructPrivate.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStructPrivate.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(DHT11_PORT, &GPIO_InitStructPrivate); // set the pin as input
+  microDelay (40);
+  if (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)))
+  {
+    microDelay (80);
+    if ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN))) Response = 1;
+  }
+  pMillis = HAL_GetTick();
+  cMillis = HAL_GetTick();
+  while ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
+  {
+    cMillis = HAL_GetTick();
+  }
+  return Response;
+}
+
+uint8_t DHT11_Read (void)
+{
+  uint8_t a,b;
+  for (a=0;a<8;a++)
+  {
+    pMillis = HAL_GetTick();
+    cMillis = HAL_GetTick();
+    while (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
+    {  // wait for the pin to go high
+      cMillis = HAL_GetTick();
+    }
+    microDelay (40);   // wait for 40 us
+    if (!(HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)))   // if the pin is low
+      b&= ~(1<<(7-a));
+    else
+      b|= (1<<(7-a));
+    pMillis = HAL_GetTick();
+    cMillis = HAL_GetTick();
+    while ((HAL_GPIO_ReadPin (DHT11_PORT, DHT11_PIN)) && pMillis + 2 > cMillis)
+    {  // wait for the pin to go low
+      cMillis = HAL_GetTick();
+    }
+  }
+  return b;
+}
+
+void Read_RH(void)
+{
+	char cmd[30];
+	sprintf(cmd,"Rh: %2.f",RH);
+	HAL_UART_Transmit(&huart1,(uint8_t*)cmd,(uint8_t)strlen(cmd),100);
+	uint8_t pct[]="%\n";
+	HAL_UART_Transmit(&huart1,(uint8_t*)pct,(uint8_t)sizeof(pct),100);
+}
+
+void Read_Temp(void)
+{
+	char cmd[30];
+	sprintf(cmd,"Temp: %2.f C",tCelsius);
+	HAL_UART_Transmit(&huart1,(uint8_t*)cmd,(uint8_t)strlen(cmd),100);
+}
+
+void readSensor(void)
+{
+	if (DHT11_Start())
+	{
+		RHI = DHT11_Read(); // Relative humidity integral
+		RHD = DHT11_Read(); // Relative humidity decimal
+		TCI = DHT11_Read(); // Celsius integral
+		TCD = DHT11_Read(); // Celsius decimal
+		SUM = DHT11_Read(); // Check sum
+		if (RHI + RHD + TCI + TCD == SUM)
+		{
+			// Can use RHI and TCI for any purposes if whole number only needed
+			tCelsius = (float) TCI + (float) (TCD / 10.0);
+			tFahrenheit = tCelsius * 9 / 5 + 32;
+			RH = (float) RHI + (float) (RHD / 10.0);
+		}
+	}
+}
+
+void On_led(void)
+{
+	HAL_UART_Transmit_IT(&huart1, on_led_mode, sizeof(on_led_mode));
+	for (int i = 0; i < NUMBER_OF_LED; i++)
+	{
+		HAL_GPIO_WritePin(LED_PORT, led[i], 1);
+	}
+	on_led_flag = true;
+}
+
+void Off_led(void)
+{
+	HAL_UART_Transmit_IT(&huart1, off_led_mode, sizeof(off_led_mode));
+	for (int i = 0; i < NUMBER_OF_LED; i++)
+	{
+		HAL_GPIO_WritePin(LED_PORT, led[i], 0);
+	}
+	on_led_flag=false;
+}
+
+
+void Stop_Waiting_Mode(void)
+{
+	HAL_TIM_Base_Stop_IT(&htim1);
+	if (__HAL_TIM_GET_COUNTER(&htim1))
+	__HAL_TIM_SET_COUNTER(&htim1, 0);
+	waiting_flag = false;
+}
+
+void Waiting_Mode_Set(uint32_t time)
+{
+	Stop_Waiting_Mode();
+	current_tim = HAL_GetTick();
+	waiting_flag= true;
+	__HAL_TIM_SET_AUTORELOAD(&htim1, time - 1);
+	HAL_TIM_Base_Start_IT(&htim1);
+}
+
 
 // Callback functions
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 {
-	if(htim->Instance == TIM2 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3)
+	if(htim->Instance == TIM3 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
 	{
-		duty_cycle = __HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_3) * 0.01;
+		duty_cycle = __HAL_TIM_GET_COMPARE(&htim3, TIM_CHANNEL_2) * 0.01;
 		sprintf(duty_cycle_num , "Duty cycle : %d\n", duty_cycle);
 		HAL_UART_Transmit_IT(&huart1, duty_cycle_num, sizeof(duty_cycle_num));
 	}
@@ -507,9 +764,9 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if(htim->Instance == TIM2 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
+	if(htim->Instance == TIM3 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
 	{
-		__HAL_TIM_SET_COUNTER(&htim2, counter);
+		__HAL_TIM_SET_COUNTER(&htim3, counter);
 	}
 }
 
@@ -518,13 +775,62 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if (huart->Instance == huart1.Instance)
 	{
-		choice = atoi(msg1);
-		if (choice == prev_choice)
+		choice = msg1[0] - '0';
+		if (choice == 0 && choice == prev_choice)
+		{
+			HAL_UART_Transmit_IT(&huart1, logg, sizeof(logg));
+			HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
+		}
+		else if (choice == prev_choice)
 		{
 			HAL_UART_Transmit_IT(&huart1, be_on_operation,
 					sizeof(be_on_operation));
-			HAL_UART_Receive_IT(huart, msg1, sizeof(msg1));
+			HAL_UART_Receive_IT(&huart1, msg1, sizeof(msg1));
 		}
+	}
+}
+// ##### AN's Callback functions #####
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	previous_tim = current_tim;
+	current_tim = HAL_GetTick();
+	waiting=(current_tim-previous_tim);
+	if (htim->Instance == htim1.Instance && waiting_flag)
+	{
+		char onled[60];
+		uint8_t offled[] = "Led off\n";
+		sprintf(onled,"Led on. Cycle: %lu ms\n",waiting);
+		HAL_UART_Transmit(&huart1, (uint8_t*)onled, (uint8_t)strlen(onled),100);
+		if (__HAL_TIM_GET_AUTORELOAD(&htim1) == WAITING_20S - 1)
+		{
+			for (int i = 0; i < NUMBER_OF_LED; i++)
+			{
+				HAL_GPIO_WritePin(LED_PORT, led[i], 1);
+				for (int i = 0; i < 2000; i++)
+				{
+					for (int j = 0; j < 500; j++)
+					{
+					}
+				}
+			}
+		}
+		else if (__HAL_TIM_GET_AUTORELOAD(&htim1) == WAITING_10S - 1)
+		{
+			for (int i = NUMBER_OF_LED - 1; i >= 0; i--)
+			{
+				HAL_GPIO_WritePin(LED_PORT, led[i], 1);
+				for (int i = 0; i < 2000; i++)
+				{
+					for (int j = 0; j < 500; j++);
+				}
+			}
+		}
+
+		for (int i = 0; i < NUMBER_OF_LED; i++)
+		{
+			HAL_GPIO_TogglePin(LED_PORT, led[i]);
+		}
+		HAL_UART_Transmit(&huart1, offled, sizeof(offled),100);
 	}
 }
 
